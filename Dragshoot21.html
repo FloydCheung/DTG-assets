@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Doom-Style FPS - PS1 Graphics with Baby Pink Uzi</title>
+    <style>
+        body { margin: 0; overflow: hidden; }
+        canvas { display: block; }
+        #crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 20px;
+            height: 20px;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-size: 20px;
+            pointer-events: none;
+        }
+        #mapOverlay {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 50%;
+            height: 50%;
+            transform: translate(-50%, -50%);
+            display: none;
+            object-fit: contain;
+            background: rgba(0, 0, 0, 0.5);
+        }
+        #mapHint {
+            position: absolute;
+            bottom: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: black;
+            font-size: 16px;
+            font-family: Arial, sans-serif;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="crosshair">+</div>
+    <img id="mapOverlay" src="https://raw.githubusercontent.com/FloydCheung/DTGassets/main/Map-of-Kowloon-Walled-City-1985-Source-Kowloon-Walled-City-Kai-Fong-Association.png" alt="Map">
+    <div id="mapHint">Press M for map</div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+    <script src="https://unpkg.com/three@0.134.0/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="https://unpkg.com/three@0.134.0/examples/js/postprocessing/EffectComposer.js"></script>
+    <script src="https://unpkg.com/three@0.134.0/examples/js/postprocessing/RenderPass.js"></script>
+    <script src="https://unpkg.com/three@0.134.0/examples/js/postprocessing/ShaderPass.js"></script>
+    <script src="https://unpkg.com/three@0.134.0/examples/js/shaders/CopyShader.js"></script>
+    <script>
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.01, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: false });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        const composer = new THREE.EffectComposer(renderer);
+        const renderPass = new THREE.RenderPass(scene, camera);
+        composer.addPass(renderPass);
+
+        const ps1Shader = {
+            uniforms: {
+                tDiffuse: { value: null },
+                resolution: { value: new THREE.Vector2(window.innerWidth / 4, window.innerHeight / 4) },
+                time: { value: 0.0 }
+            },
+            vertexShader: `
+                varying vec2 vUv;
+                void main() {
+                    vUv = uv;
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                }
+            `,
+            fragmentShader: `
+                uniform sampler2D tDiffuse;
+                uniform vec2 resolution;
+                uniform float time;
+                varying vec2 vUv;
+                float dither(vec2 uv, float brightness) {
+                    float pattern[4];
+                    pattern[0] = -0.5; pattern[1] = 0.5;
+                    pattern[2] = 0.5; pattern[3] = -0.5;
+                    int x = int(mod(uv.x * resolution.x, 2.0));
+                    int y = int(mod(uv.y * resolution.y, 2.0));
+                    return pattern[x + y * 2] * 0.1;
+                }
+                void main() {
+                    vec2 pixelatedUV = floor(vUv * resolution) / resolution;
+                    vec4 color = texture2D(tDiffuse, pixelatedUV);
+                    float levels = 16.0;
+                    color.rgb = floor(color.rgb * levels) / levels;
+                    float brightness = dot(color.rgb, vec3(0.299, 0.587, 0.114));
+                    color.rgb += dither(vUv, brightness);
+                    gl_FragColor = color;
+                }
+            `
+        };
+        const ps1Pass = new THREE.ShaderPass(ps1Shader);
+        ps1Pass.renderToScreen = true;
+        composer.addPass(ps1Pass);
+
+        const audioListener = new THREE.AudioListener();
+        camera.add(audioListener);
+        const qooSound = new THREE.Audio(audioListener);
+        const audioLoader = new THREE.AudioLoader();
+        audioLoader.load(
+            'https://www.myinstants.com/media/sounds/coin-collect.mp3',
+            function(buffer) {
+                qooSound.setBuffer(buffer);
+                qooSound.setVolume(0.5);
+            }
+        );
+
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+        scene.add(ambientLight);
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        directionalLight.position.set(5, 10, 5);
+        scene.add(directionalLight);
+
+        const spotLight = new THREE.SpotLight(0xffffff, 1);
+        spotLight.position.set(0, 10, 0);
+        spotLight.angle = Math.PI / 6;
+        spotLight.penumbra = 0.1;
+        spotLight.decay = 2;
+        spotLight.distance = 20;
+        scene.add(spotLight);
+
+        function createSkybox() {
+            const skyboxSize = 1000;
+            const skyboxGeometry = new THREE.BoxGeometry(skyboxSize, skyboxSize, skyboxSize);
+            const textureLoader = new THREE.TextureLoader();
+            const spaceTexture = textureLoader.load(
+                'https://upload.wikimedia.org/wikipedia/commons/2/2f/Hubble_ultra_deep_field.jpg'
+            );
+            const skyboxMaterials = [];
+            for (let i = 0; i < 6; i++) {
+                skyboxMaterials.push(new THREE.MeshBasicMaterial({
+                    map: spaceTexture,
+                    side: THREE.BackSide
+                }));
+            }
+            const skybox = new THREE.Mesh(skyboxGeometry, skyboxMaterials);
+            scene.add(skybox);
+        }
+        createSkybox();
+
+        const textureLoader = new THREE.TextureLoader();
+        const jadeTexture = textureLoader.load(
+            'https://upload.wikimedia.org/wikipedia/commons/2/22/Jadeitite_%28jadeite_jade%29_%28Hpakan-Tawmaw_Jade_Tract%2C_Hpakan_Ultramafic_Body%2C_Naga-Adaman_Ophiolite%2C_Late_Jurassic%2C_147_Ma%3B_alluvial_clast_%28placer_jade%29_%2815112081955%29.jpg'
+        );
+        const terrainGeometry = new THREE.CircleGeometry(25, 32);
+        const terrainMaterial = new THREE.MeshPhongMaterial({ map: jadeTexture });
+        const terrain = new THREE.Mesh(terrainGeometry, terrainMaterial);
+        terrain.rotation.x = -Math.PI / 2;
+        scene.add(terrain);
+
+        const skySpriteTexture = textureLoader.load(
+            'https://raw.githubusercontent.com/FloydCheung/DTGassets/main/health1.png'
+        );
+        const skySpriteGeometry = new THREE.PlaneGeometry(100, 100);
+        const skySpriteMaterial = new THREE.MeshBasicMaterial({
+            map: skySpriteTexture,
+            transparent: true,
+            side: THREE.DoubleSide,
+            color: 0x000000,
+            blending: THREE.SubtractiveBlending
+        });
+        const skySprite = new THREE.Mesh(skySpriteGeometry, skySpriteMaterial);
+        skySprite.position.set(0, 50, -50);
+        scene.add(skySprite);
+
+        let skyWatcher;
+        const skyWatcherTexture = textureLoader.load(
+            'https://raw.githubusercontent.com/FloydCheung/DTGassets/main/healthblack.png'
+        );
+        const skyWatcherGeometry = new THREE.PlaneGeometry(50, 50);
+        const skyWatcherMaterial = new THREE.MeshBasicMaterial({
+            map: skyWatcherTexture,
+            transparent: true,
+            side: THREE.DoubleSide
+        });
+        skyWatcher = new THREE.Mesh(skyWatcherGeometry, skyWatcherMaterial);
+        skyWatcher.position.set(40, 10, 0);
+        scene.add(skyWatcher);
+
+        let car;
+        const carLoader = new THREE.GLTFLoader();
+        carLoader.load(
+            'https://raw.githubusercontent.com/FloydCheung/DTGassets/main/CAR%20Model.glb',
+            (gltf) => {
+                car = gltf.scene;
+                car.scale.set(0.02, 0.02, 0.02);
+                car.position.set(0, 0, 0);
+                car.rotation.y = Math.PI / 4;
+                scene.add(car);
+            }
+        );
+
+        let pistol;
+        const pistolLoader = new THREE.GLTFLoader();
+        pistolLoader.load(
+            'https://raw.githubusercontent.com/FloydCheung/DTGassets/main/Smg%20Compact%20West.glb',
+            (gltf) => {
+                pistol = gltf.scene;
+                pistol.scale.set(8.0, 8.0, 8.0);
+                pistol.position.set(0.8, -0.5, -2.8);
+                pistol.rotation.set(0, 0, 0);
+                pistol.traverse((child) => {
+                    if (child.isMesh) {
+                        // Apply baby pink color (#FFC1CC)
+                        child.material = new THREE.MeshPhongMaterial({
+                            color: 0xFFC1CC, // Baby pink
+                            shininess: 30 // Optional: slight shine for a plastic look
+                        });
+                        child.castShadow = false;
+                    }
+                });
+                const muzzleFlashTexture = textureLoader.load(
+                    'https://upload.wikimedia.org/wikipedia/commons/5/5c/Muzzle_flash_VFX.png'
+                );
+                muzzleFlashTexture.flipY = false;
+                muzzleFlashTexture.wrapS = THREE.RepeatWrapping;
+                muzzleFlashTexture.repeat.x = -1;
+                muzzleFlashTexture.offset.x = 1;
+                const muzzleFlashGeometry = new THREE.PlaneGeometry(1, 1);
+                const muzzleFlashMaterial = new THREE.MeshBasicMaterial({
+                    map: muzzleFlashTexture,
+                    transparent: true,
+                    side: THREE.DoubleSide
+                });
+                const muzzleFlash = new THREE.Mesh(muzzleFlashGeometry, muzzleFlashMaterial);
+                muzzleFlash.position.set(0.8, -0.2, -3.0);
+                muzzleFlash.visible = false;
+                camera.add(muzzleFlash);
+                pistol.muzzleFlash = muzzleFlash;
+                camera.add(pistol);
+            },
+            undefined,
+            (error) => console.error('Error loading SMG model:', error)
+        );
+        scene.add(camera);
+
+        class Collectable {
+            constructor(x, z, textureUrl, isCompass = false) {
+                this.mesh = new THREE.Mesh(
+                    new THREE.PlaneGeometry(isCompass ? 3.0 : 1.0, isCompass ? 3.0 : 1.0),
+                    new THREE.MeshBasicMaterial({
+                        map: textureLoader.load(textureUrl),
+                        transparent: true,
+                        side: THREE.DoubleSide,
+                        color: isCompass ? 0xA0A0A0 : 0xffffff
+                    })
+                );
+                this.mesh.position.set(x, isCompass ? 1.5 : 0.5, z);
+                this.isCompass = isCompass;
+                scene.add(this.mesh);
+            }
+            update() { if (this.mesh) this.mesh.rotation.y += this.isCompass ? 0.05 : 0.02; }
+            collect() {
+                if (this.mesh) {
+                    scene.remove(this.mesh);
+                    this.mesh = null;
+                    if (!this.isCompass) qooSound.play();
+                }
+            }
+        }
+
+        let collectables = [];
+        let compass = null;
+
+        function spawnCollectables() {
+            const qooTextures = [
+                'https://raw.githubusercontent.com/FloydCheung/DTGassets/main/qoo1.png',
+                'https://raw.githubusercontent.com/FloydCheung/DTGassets/main/qoo2.png',
+                'https://raw.githubusercontent.com/FloydCheung/DTGassets/main/qoo3.png'
+            ];
+            collectables = [];
+            const scatterRadius = 10;
+            for (let i = 0; i < 20; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const distance = Math.random() * scatterRadius;
+                const x = Math.cos(angle) * distance;
+                const z = Math.sin(angle) * distance;
+                const texture = qooTextures[Math.floor(Math.random() * 3)];
+                collectables.push(new Collectable(x, z, texture));
+            }
+            const terrainSize = 25;
+            const edgeOffset = 5;
+            const minDistanceFromPlayer = 10;
+            let playerPos = camera.position;
+            let distanceToPlayer, compassX, compassZ;
+            do {
+                const side = Math.floor(Math.random() * 4);
+                switch (side) {
+                    case 0: compassX = Math.random() * (terrainSize * 2 - edgeOffset * 2) - terrainSize + edgeOffset; compassZ = terrainSize - edgeOffset; break;
+                    case 1: compassX = terrainSize - edgeOffset; compassZ = Math.random() * (terrainSize * 2 - edgeOffset * 2) - terrainSize + edgeOffset; break;
+                    case 2: compassX = Math.random() * (terrainSize * 2 - edgeOffset * 2) - terrainSize + edgeOffset; compassZ = -terrainSize + edgeOffset; break;
+                    case 3: compassX = -terrainSize + edgeOffset; compassZ = Math.random() * (terrainSize * 2 - edgeOffset * 2) - terrainSize + edgeOffset; break;
+                }
+                distanceToPlayer = Math.sqrt(Math.pow(compassX - playerPos.x, 2) + Math.pow(compassZ - playerPos.z, 2));
+            } while (distanceToPlayer < minDistanceFromPlayer);
+            compass = new Collectable(compassX, compassZ, 'https://raw.githubusercontent.com/FloydCheung/DTGassets/main/compass.png', true);
+            collectables.push(compass);
+        }
+
+        function spawnPlayer() {
+            const terrainSize = 25;
+            const innerEdgeOffset = 5;
+            const maxRadius = terrainSize - innerEdgeOffset;
+            const angle = Math.random() * Math.PI * 2;
+            const distance = Math.random() * maxRadius;
+            const playerX = Math.cos(angle) * distance;
+            const playerZ = Math.sin(angle) * distance;
+            const facingAngle = Math.atan2(-playerX, -playerZ);
+            camera.position.set(playerX, 1.8, playerZ);
+            camera.rotation.y = facingAngle;
+        }
+
+        spawnPlayer();
+        spawnCollectables();
+
+        class Enemy {
+            constructor(x, z) {
+                this.mesh = null;
+                this.speed = 0.03;
+                this.baseY = 0;
+                this.rotationSpeed = 0.1;
+                this.isDying = false;
+                this.deathRotationSpeed = 0.5;
+                this.deathFallSpeed = 0.1;
+                const loader = new THREE.GLTFLoader();
+                loader.load(
+                    'https://threejs.org/examples/models/gltf/DragonAttenuation.glb',
+                    (gltf) => {
+                        this.mesh = gltf.scene.children[1].clone();
+                        this.mesh.scale.set(0.8, 0.8, 0.8);
+                        const box = new THREE.Box3().setFromObject(this.mesh);
+                        const height = box.max.y - box.min.y;
+                        this.baseY = height * 0.02 + 0.02;
+                        this.mesh.position.set(x, this.baseY, z);
+                        this.mesh.traverse((child) => {
+                            if (child.isMesh) {
+                                child.material = new THREE.MeshPhongMaterial({
+                                    map: jadeTexture,
+                                    emissive: new THREE.Color(0x40bf77),
+                                    emissiveIntensity: 0.3,
+                                    shininess: 50
+                                });
+                            }
+                        });
+                        this.light = new THREE.PointLight(0x40bf77, 0.5, 10);
+                        this.light.position.set(0, 1, 0);
+                        this.mesh.add(this.light);
+                        scene.add(this.mesh);
+                    }
+                );
+            }
+            update(playerPos) {
+                if (!this.mesh) return;
+                if (this.isDying) {
+                    this.mesh.rotation.z -= this.deathRotationSpeed;
+                    this.mesh.position.y -= this.deathFallSpeed;
+                    if (this.mesh.position.y < -2) {
+                        scene.remove(this.mesh);
+                        this.mesh = null;
+                        if (this.light) this.mesh.remove(this.light);
+                    }
+                } else {
+                    const direction = playerPos.clone().sub(this.mesh.position);
+                    const distance = direction.length();
+                    direction.y = 0;
+                    direction.normalize();
+                    if (distance > 2) {
+                        this.mesh.position.x += direction.x * this.speed;
+                        this.mesh.position.z += direction.z * this.speed;
+                    }
+                    this.mesh.rotation.z -= this.rotationSpeed;
+                    this.mesh.position.y = this.baseY;
+                }
+            }
+            die() { this.isDying = true; }
+        }
+
+        let enemies = [];
+        function spawnEnemies() {
+            enemies = [
+                new Enemy(10, 10), new Enemy(-5, -5), new Enemy(0, 15),
+                new Enemy(15, -10), new Enemy(-12, 8), new Enemy(8, -15),
+                new Enemy(-15, -12)
+            ];
+        }
+        spawnEnemies();
+
+        let moveForward = false, moveBackward = false, strafeLeft = false, strafeRight = false;
+        const velocity = new THREE.Vector3();
+        const speed = 0.2;
+        let pointerLocked = false;
+        let collectableCount = 0;
+        const mapOverlay = document.getElementById('mapOverlay');
+
+        document.addEventListener('click', () => document.body.requestPointerLock());
+        document.addEventListener('pointerlockchange', () => {
+            pointerLocked = document.pointerLockElement === document.body;
+        });
+        document.addEventListener('mousemove', (event) => {
+            if (pointerLocked) camera.rotation.y -= event.movementX * 0.002;
+        });
+        document.addEventListener('keydown', (event) => {
+            switch (event.code) {
+                case 'KeyW': moveForward = true; break;
+                case 'KeyS': moveBackward = true; break;
+                case 'KeyA': strafeLeft = true; break;
+                case 'KeyD': strafeRight = true; break;
+                case 'KeyM': 
+                    mapOverlay.style.display = (mapOverlay.style.display === 'none' || mapOverlay.style.display === '') ? 'block' : 'none';
+                    break;
+            }
+        });
+        document.addEventListener('keyup', (event) => {
+            switch (event.code) {
+                case 'KeyW': moveForward = false; break;
+                case 'KeyS': moveBackward = false; break;
+                case 'KeyA': strafeLeft = false; break;
+                case 'KeyD': strafeRight = false; break;
+            }
+        });
+        document.addEventListener('mousedown', (event) => {
+            if (pointerLocked && event.button === 0) shoot();
+        });
+
+        function shoot() {
+            if (pistol) {
+                const initialPosZ = -2.8;
+                const initialPosY = -0.5;
+                const recoilPosZ = -2.0;
+                pistol.position.z = initialPosZ + 0.5;
+                pistol.position.y = initialPosY + 0.3;
+                setTimeout(() => pistol.position.z = recoilPosZ, 50);
+                setTimeout(() => {
+                    pistol.position.z = initialPosZ;
+                    pistol.position.y = initialPosY;
+                }, 150);
+                if (pistol.muzzleFlash) {
+                    pistol.muzzleFlash.visible = true;
+                    setTimeout(() => pistol.muzzleFlash.visible = false, 50);
+                }
+                const raycaster = new THREE.Raycaster();
+                raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+                const intersects = raycaster.intersectObjects(enemies.filter(e => e.mesh && !e.isDying).map(e => e.mesh));
+                if (intersects.length > 0) {
+                    const enemy = enemies.find(e => e.mesh === intersects[0].object);
+                    if (enemy) {
+                        enemy.die();
+                        setTimeout(() => {
+                            if (enemy.mesh === null) enemies.splice(enemies.indexOf(enemy), 1);
+                        }, 2000);
+                    }
+                }
+            }
+        }
+
+        function resetGame() {
+            collectables.forEach(c => { if (c.mesh) scene.remove(c.mesh); });
+            enemies.forEach(e => { if (e.mesh) scene.remove(e.mesh); });
+            collectableCount = 0;
+            spawnCollectables();
+            spawnEnemies();
+            spawnPlayer();
+        }
+
+        function checkCollision(newX, newZ) {
+            const terrainSize = 25;
+            const withinBounds = Math.sqrt(newX * newX + newZ * newZ) <= terrainSize;
+            if (car) {
+                const carDistance = Math.sqrt(Math.pow(newX - 0, 2) + Math.pow(newZ - 0, 2));
+                if (carDistance < 2) return true;
+            }
+            collectables.forEach((collectable, index) => {
+                if (collectable.mesh) {
+                    const distance = Math.sqrt(
+                        Math.pow(newX - collectable.mesh.position.x, 2) +
+                        Math.pow(newZ - collectable.mesh.position.z, 2)
+                    );
+                    const collisionRadius = collectable.isCompass ? 1.5 : 0.5;
+                    if (distance < collisionRadius) {
+                        if (collectable.isCompass) {
+                            collectable.collect();
+                            collectables.splice(index, 1);
+                            resetGame();
+                        } else {
+                            collectable.collect();
+                            collectables.splice(index, 1);
+                            collectableCount++;
+                        }
+                    }
+                }
+            });
+            return !withinBounds;
+        }
+
+        let clock = new THREE.Clock();
+        function animate() {
+            requestAnimationFrame(animate);
+
+            velocity.x = 0;
+            velocity.z = 0;
+            if (moveForward) {
+                velocity.z -= Math.cos(camera.rotation.y) * speed;
+                velocity.x -= Math.sin(camera.rotation.y) * speed;
+            }
+            if (moveBackward) {
+                velocity.z += Math.cos(camera.rotation.y) * speed;
+                velocity.x += Math.sin(camera.rotation.y) * speed;
+            }
+            if (strafeLeft) {
+                velocity.z -= Math.cos(camera.rotation.y + Math.PI/2) * speed;
+                velocity.x -= Math.sin(camera.rotation.y + Math.PI/2) * speed;
+            }
+            if (strafeRight) {
+                velocity.z += Math.cos(camera.rotation.y + Math.PI/2) * speed;
+                velocity.x += Math.sin(camera.rotation.y + Math.PI/2) * speed;
+            }
+
+            const newX = camera.position.x + velocity.x;
+            const newZ = camera.position.z + velocity.z;
+            if (!checkCollision(newX, camera.position.z)) camera.position.x = newX;
+            if (!checkCollision(camera.position.x, newZ)) camera.position.z = newZ;
+            checkCollision(newX, newZ);
+
+            enemies.forEach(enemy => enemy.update(camera.position));
+            collectables.forEach(collectable => collectable.update());
+            if (skySprite) skySprite.lookAt(camera.position);
+            if (pistol && pistol.muzzleFlash) pistol.muzzleFlash.lookAt(camera.position);
+
+            if (skyWatcher) {
+                const orbitRadius = 40;
+                const orbitSpeed = 0.5;
+                const time = clock.getElapsedTime();
+                const angle = time * orbitSpeed;
+                const orbitX = Math.cos(angle) * orbitRadius;
+                const orbitZ = Math.sin(angle) * orbitRadius;
+                skyWatcher.position.set(orbitX, 10, orbitZ);
+                skyWatcher.lookAt(camera.position);
+            }
+
+            ps1Shader.uniforms.time.value = clock.getElapsedTime();
+            composer.render();
+        }
+
+        animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+            ps1Shader.uniforms.resolution.value.set(window.innerWidth / 4, window.innerHeight / 4);
+        });
+
+        window.onerror = function(msg, url, lineNo, columnNo, error) {
+            console.error('Error:', msg, 'Line:', lineNo, 'Column:', columnNo, 'Stack:', error.stack);
+            return false;
+        };
+    </script>
+</body>
+</html>
